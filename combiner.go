@@ -28,16 +28,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
-
-var lineFormat1 = regexp.MustCompile(`^\w\d{4} (\d{2}:\d{2}:\d{2}.\d{6})`)                  // Example: I1234 22:10:34.002031
-var lineFormat2 = regexp.MustCompile(`^\w\d{4} (\d{2}:\d{2}:\d{2}.\d{3})`)                  // Example: I1234 22:10:34.002
-var lineFormat3 = regexp.MustCompile(`^[A-Z][a-z]+ \d+ (\d{2}:\d{2}:\d{2}.\d{6})`)          // Example: Aug 24 22:10:34.000000
-var lineFormat4 = regexp.MustCompile(`^[A-Z][a-z]+ \d+ (\d{2}:\d{2}:\d{2}.\d{3})`)          // Example: Aug 24 22:10:34.000
-var lineFormat5 = regexp.MustCompile(`^time="\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2}.\d{9})Z`) // Example: time="2020-09-01T05:59:37.283814575Z"
-var lineFormat6 = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{6})`)                           // Example: 22:10:34.002031
-var lineFormat7 = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{3})`)                           // Example: 22:10:34.002
-var lineFormat8 = regexp.MustCompile(`(\d{2}:\d{2}:\d{2})`)                                 // Example: 22:10:34
 
 func main() {
 	ctx := context.Background()
@@ -85,28 +77,29 @@ func main() {
 			nameWithoutPrefix := strings.TrimPrefix(name, prefix)
 			shortName := shortName(nameWithoutPrefix)
 
-			dayKey := 0
-			noTimeKey := strings.Repeat(" ", 18)
-			timeKey := noTimeKey
-			firstTimeKey := noTimeKey
-
+			var lineTime time.Time
+			emptyTime := time.Time{}
+			firstTime := emptyTime
+			dayNumber := 0
 			var rowNumber = 0
 			var lines []string
-			lines = append(lines, fmt.Sprintf("%d:%s:%08d [%04d] --> %s", dayKey, noTimeKey, rowNumber, i, nameWithoutPrefix))
 			for scanner.Scan() {
 				rowNumber++
 				line := scanner.Text()
-				timeKey = getTimeKey(line, timeKey)
-				if firstTimeKey == noTimeKey {
-					firstTimeKey = timeKey
+				lineTime, err = parseLineTime(line, lineTime)
+				if err != nil {
+					log.Fatalf("Unable to parse line time: %v", err)
 				}
-				// TODO: For some log files, this isn't a reliable way to determine if it spans a day...
-				//if timeKey < firstTimeKey {
-				//	dayKey = 1 // Handle if log file spans midnight
-				//} else {
-				//	dayKey = 0
-				//}
-				lines = append(lines, fmt.Sprintf("%d:%s:%08d [%04d] %-62s %s", dayKey, timeKey, rowNumber, i, "["+shortName+"]", line))
+				if firstTime == emptyTime {
+					firstTime = lineTime
+				}
+				if lineTime.Hour() < firstTime.Hour()-1 {
+					dayNumber = 1
+				}
+
+				sortKey := fmt.Sprintf("%d:%02d:%02d:%02d.%09d:%04d:%08d", dayNumber, lineTime.Hour(), lineTime.Minute(), lineTime.Second(), lineTime.Nanosecond(), i, rowNumber)
+				displayTime := fmt.Sprintf("%02d:%02d:%02d.%09d", lineTime.Hour(), lineTime.Minute(), lineTime.Second(), lineTime.Nanosecond())
+				lines = append(lines, fmt.Sprintf("%s %s %-62s %s", sortKey, displayTime, "["+shortName+"]", line))
 			}
 			if scanner.Err() != nil {
 				log.Fatal(scanner.Err())
@@ -131,8 +124,8 @@ func main() {
 	bw := bufio.NewWriter(os.Stdout)
 	defer bw.Flush()
 	for _, line := range combinedLines {
-		// Write line to output without time key (first 30 chars)
-		if _, err := bw.WriteString(line[30:] + "\n"); err != nil {
+		// Write line to output without sort key (first 35 chars)
+		if _, err := bw.WriteString(line[35:] + "\n"); err != nil {
 			log.Fatalf("failed to write string: %v", err)
 		}
 	}
@@ -160,32 +153,32 @@ func getObjectNames(ctx context.Context, bucket *storage.BucketHandle, prefix st
 	return objectNames, nil
 }
 
-func getTimeKey(line, defaultTimeKey string) string {
-	if match := lineFormat1.FindStringSubmatch(line); match != nil {
-		return match[1] + "000"
+var timeNanoPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{9})`)  // Example: 22:10:34.002031939
+var timeMicroPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{6})`) // Example: 22:10:34.002031
+var timeMilliPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{3})`) // Example: 22:10:34.002
+var timePattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2})`)            // Example: 22:10:34
+
+const (
+	timeNanoLayout  = "15:04:05.000000000"
+	timeMicroLayout = "15:04:05.000000"
+	timeMilliLayout = "15:04:05.000"
+	timeLayout      = "15:04:05"
+)
+
+func parseLineTime(line string, defaultValue time.Time) (time.Time, error) {
+	if match := timeNanoPattern.FindStringSubmatch(line); match != nil {
+		return time.Parse(timeNanoLayout, match[1])
 	}
-	if match := lineFormat2.FindStringSubmatch(line); match != nil {
-		return match[1] + "000000"
+	if match := timeMicroPattern.FindStringSubmatch(line); match != nil {
+		return time.Parse(timeMicroLayout, match[1])
 	}
-	if match := lineFormat3.FindStringSubmatch(line); match != nil {
-		return match[1] + "000"
+	if match := timeMilliPattern.FindStringSubmatch(line); match != nil {
+		return time.Parse(timeMilliLayout, match[1])
 	}
-	if match := lineFormat4.FindStringSubmatch(line); match != nil {
-		return match[1] + "000000"
+	if match := timePattern.FindStringSubmatch(line); match != nil {
+		return time.Parse(timeLayout, match[1])
 	}
-	if match := lineFormat5.FindStringSubmatch(line); match != nil {
-		return match[1]
-	}
-	if match := lineFormat6.FindStringSubmatch(line); match != nil {
-		return match[1] + "000"
-	}
-	if match := lineFormat7.FindStringSubmatch(line); match != nil {
-		return match[1] + "000000"
-	}
-	if match := lineFormat8.FindStringSubmatch(line); match != nil {
-		return match[1] + "000000000"
-	}
-	return defaultTimeKey
+	return defaultValue, nil
 }
 
 func shortName(name string) string {
