@@ -100,11 +100,12 @@ func main() {
 				if firstTimeKey == noTimeKey {
 					firstTimeKey = timeKey
 				}
-				if timeKey < firstTimeKey {
-					dayKey = 1 // Handle if log file spans midnight
-				} else {
-					dayKey = 0
-				}
+				// TODO: For some log files, this isn't a reliable way to determine if it spans a day...
+				//if timeKey < firstTimeKey {
+				//	dayKey = 1 // Handle if log file spans midnight
+				//} else {
+				//	dayKey = 0
+				//}
 				lines = append(lines, fmt.Sprintf("%d:%s:%08d [%04d] %-62s %s", dayKey, timeKey, rowNumber, i, "["+shortName+"]", line))
 			}
 			if scanner.Err() != nil {
