@@ -177,9 +177,9 @@ func main() {
 	}
 }
 
-var timeNanoPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{9})`)  // Example: 22:10:34.002031939
-var timeMicroPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{6})`) // Example: 22:10:34.002031
-var timeMilliPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{3})`) // Example: 22:10:34.002
+var timeNanoPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}\.\d{9})`)  // Example: 22:10:34.002031939
+var timeMicroPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}\.\d{6})`) // Example: 22:10:34.002031
+var timeMilliPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}\.\d{3})`) // Example: 22:10:34.002
 var timePattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2})`)            // Example: 22:10:34
 
 const (
