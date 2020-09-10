@@ -23,8 +23,10 @@ import (
 	"fmt"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -35,28 +37,71 @@ func main() {
 	ctx := context.Background()
 
 	if len(os.Args) != 2 {
-		log.Fatalf("missing url argument")
+		log.Fatalf("missing path argument")
 	}
-	url := os.Args[1]
+	path := os.Args[1]
 
-	client, err := storage.NewClient(ctx, option.WithoutAuthentication())
-	if err != nil {
-		log.Fatalf("failed to create storage client: %v", err)
-	}
-	defer client.Close()
-
-	bucketName := "kubernetes-jenkins"
+	var objectNames []string
 	var prefix string
-	if strings.Contains(url, bucketName) {
-		prefix = strings.Split(url, "/"+bucketName+"/")[1]
-	} else {
-		log.Fatalf("unable to determine prefix from the specified url")
-	}
+	var getReader func(ctx context.Context, name string) (io.ReadCloser, error)
 
-	bucket := client.Bucket(bucketName)
-	objectNames, err := getObjectNames(ctx, bucket, prefix)
-	if err != nil {
-		log.Fatalf("failed to get object names from bucket %v with prefix %v: %v", bucket, prefix, err)
+	var urlPattern = regexp.MustCompile(`https?://`)
+	if urlPattern.MatchString(path) {
+		// Bucket source
+		client, err := storage.NewClient(ctx, option.WithoutAuthentication())
+		if err != nil {
+			log.Fatalf("failed to create storage client: %v", err)
+		}
+		defer client.Close()
+		bucketName := "kubernetes-jenkins"
+		if strings.Contains(path, bucketName) {
+			prefix = strings.Split(path, "/"+bucketName+"/")[1]
+		} else {
+			log.Fatalf("unable to determine prefix from the specified path")
+		}
+		bucket := client.Bucket(bucketName)
+		q := &storage.Query{Prefix: prefix}
+		if err := q.SetAttrSelection([]string{"Name"}); err != nil {
+			log.Fatalf("failed to set attr selection: %v", err)
+		}
+		objects := bucket.Objects(ctx, q)
+		for {
+			objAttrs, err := objects.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				log.Fatalf("iterator error: %v", err)
+			}
+			if strings.HasSuffix(objAttrs.Name, ".log") || strings.HasSuffix(objAttrs.Name, "build-log.txt") {
+				objectNames = append(objectNames, objAttrs.Name)
+			}
+		}
+		getReader = func(ctx context.Context, name string) (io.ReadCloser, error) {
+			return bucket.Object(name).NewReader(ctx)
+		}
+	} else {
+		// Local file source
+		var err error
+		prefix, err = filepath.Abs(path)
+		if err != nil {
+			log.Fatalf("failed to get object absolute path from %v : %v", path, err)
+		}
+		err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && (strings.HasSuffix(path, ".log") || strings.HasSuffix(path, "build-log.txt")) {
+				objectNames = append(objectNames, path)
+			}
+			return nil
+		})
+		if err != nil {
+			log.Fatalf("failed to get object names from path %v : %v", path, err)
+		}
+		getReader = func(ctx context.Context, name string) (io.ReadCloser, error) {
+			return os.Open(name)
+		}
 	}
 
 	resultChan := make(chan []string, 16)
@@ -64,7 +109,7 @@ func main() {
 
 	for i, name := range objectNames {
 		go func(i int, name string) {
-			reader, err := bucket.Object(name).NewReader(ctx)
+			reader, err := getReader(ctx, name)
 			if err != nil {
 				errorChan <- fmt.Errorf("failed to create new reader for %v: %v", name, err)
 			}
@@ -130,28 +175,6 @@ func main() {
 			log.Fatalf("failed to write string: %v", err)
 		}
 	}
-}
-
-func getObjectNames(ctx context.Context, bucket *storage.BucketHandle, prefix string) ([]string, error) {
-	q := &storage.Query{Prefix: prefix}
-	if err := q.SetAttrSelection([]string{"Name"}); err != nil {
-		return nil, fmt.Errorf("failed to set attr selection: %v", err)
-	}
-	objects := bucket.Objects(ctx, q)
-	var objectNames []string
-	for {
-		objAttrs, err := objects.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("iterator error: %v", err)
-		}
-		if strings.HasSuffix(objAttrs.Name, ".log") || strings.HasSuffix(objAttrs.Name, "build-log.txt") {
-			objectNames = append(objectNames, objAttrs.Name)
-		}
-	}
-	return objectNames, nil
 }
 
 var timeNanoPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}.\d{9})`)  // Example: 22:10:34.002031939
