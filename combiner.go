@@ -43,6 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create storage client: %v", err)
 	}
+	defer client.Close()
 
 	bucketName := "kubernetes-jenkins"
 	var prefix string
@@ -88,7 +89,7 @@ func main() {
 				line := scanner.Text()
 				lineTime, err = parseLineTime(line, lineTime)
 				if err != nil {
-					log.Fatalf("Unable to parse line time: %v", err)
+					errorChan <- fmt.Errorf("unable to parse line time: %v", err)
 				}
 				if firstTime == emptyTime {
 					firstTime = lineTime
@@ -102,7 +103,7 @@ func main() {
 				lines = append(lines, fmt.Sprintf("%s %s %-62s %s", sortKey, displayTime, "["+shortName+"]", line))
 			}
 			if scanner.Err() != nil {
-				log.Fatal(scanner.Err())
+				errorChan <- scanner.Err()
 			}
 
 			resultChan <- lines
