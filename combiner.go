@@ -132,10 +132,7 @@ func main() {
 			for scanner.Scan() {
 				rowNumber++
 				line := scanner.Text()
-				lineTime, err = parseLineTime(line, lineTime)
-				if err != nil {
-					errorChan <- fmt.Errorf("unable to parse line time: %v", err)
-				}
+				lineTime = parseLineTime(line, lineTime)
 				if firstTime == emptyTime {
 					firstTime = lineTime
 				}
@@ -180,29 +177,30 @@ func main() {
 var timeNanoPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}\.\d{9})`)  // Example: 22:10:34.002031939
 var timeMicroPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}\.\d{6})`) // Example: 22:10:34.002031
 var timeMilliPattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2}\.\d{3})`) // Example: 22:10:34.002
-var timePattern = regexp.MustCompile(`(\d{2}:\d{2}:\d{2})`)            // Example: 22:10:34
 
 const (
 	timeNanoLayout  = "15:04:05.000000000"
 	timeMicroLayout = "15:04:05.000000"
 	timeMilliLayout = "15:04:05.000"
-	timeLayout      = "15:04:05"
 )
 
-func parseLineTime(line string, defaultValue time.Time) (time.Time, error) {
+func parseLineTime(line string, defaultValue time.Time) time.Time {
 	if match := timeNanoPattern.FindStringSubmatch(line); match != nil {
-		return time.Parse(timeNanoLayout, match[1])
+		if result, err := time.Parse(timeNanoLayout, match[1]); err == nil {
+			return result
+		}
 	}
 	if match := timeMicroPattern.FindStringSubmatch(line); match != nil {
-		return time.Parse(timeMicroLayout, match[1])
+		if result, err := time.Parse(timeMicroLayout, match[1]); err == nil {
+			return result
+		}
 	}
 	if match := timeMilliPattern.FindStringSubmatch(line); match != nil {
-		return time.Parse(timeMilliLayout, match[1])
+		if result, err := time.Parse(timeMilliLayout, match[1]); err == nil {
+			return result
+		}
 	}
-	if match := timePattern.FindStringSubmatch(line); match != nil {
-		return time.Parse(timeLayout, match[1])
-	}
-	return defaultValue, nil
+	return defaultValue
 }
 
 func shortName(name string) string {
